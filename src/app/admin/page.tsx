@@ -349,8 +349,9 @@ export default function AdminPage() {
             await updateQuestionsMetadata();
             await fetchQuestions();
             resetForm();
-        } catch (err) {
+        } catch (err: any) {
             console.error("Error saving question:", err);
+            alert(`Failed to save question: ${err.message}`);
         } finally {
             setAddingQuestion(false);
             setSavingEdit(false);
@@ -365,8 +366,9 @@ export default function AdminPage() {
             setSelectedIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
             if (editingId === id) resetForm();
             await updateQuestionsMetadata();
-        } catch (err) {
+        } catch (err: any) {
             console.error("Error deleting question:", err);
+            alert(`Failed to delete question: ${err.message}`);
         }
     };
 

@@ -1,6 +1,9 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+    if (!API_BASE) {
+        throw new Error("API URL is not configured. please set NEXT_PUBLIC_API_URL in your environment variables.");
+    }
     const url = `${API_BASE}${path}`;
     const MAX_RETRIES = 3;
 
