@@ -1,65 +1,205 @@
-import Image from "next/image";
+"use client";
+
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { collection, addDoc, serverTimestamp, getDoc, doc } from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import { Bug, Code, FileQuestion, Terminal } from "lucide-react";
+import styles from "./page.module.css";
+
+const sections = [
+  { id: "Python", icon: Terminal, label: "Python", description: "Standard Library & Syntax" },
+  { id: "C", icon: Code, label: "C Language", description: "Pointers & Memory" },
+  { id: "Other", icon: FileQuestion, label: "General", description: "Logic & Concepts" }
+];
 
 export default function Home() {
+  const router = useRouter();
+  const [name, setName] = useState("");
+  const [studentId, setStudentId] = useState("");
+  const [section, setSection] = useState<"C" | "Python" | "Other" | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [isQuizActive, setIsQuizActive] = useState(true);
+
+  useEffect(() => {
+    const checkStatus = async () => {
+      try {
+        const configSnap = await getDoc(doc(db, "settings", "config"));
+        if (configSnap.exists()) {
+          setIsQuizActive(configSnap.data().isQuizActive ?? true);
+        }
+      } catch (err) {
+        console.error("Error checking status:", err);
+      }
+    };
+    checkStatus();
+  }, []);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim() || !studentId.trim()) {
+      setError("Please fill in all fields");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+
+    try {
+      const docRef = await addDoc(collection(db, "participants"), {
+        name: name.trim(),
+        studentId: studentId.trim(),
+        section, // Save selected section
+        startedAt: Date.now(),
+        score: 0,
+        totalPoints: 0,
+        answers: [],
+        submitted: false,
+        createdAt: serverTimestamp(),
+      });
+
+      // Store participant ID and section in session storage
+      sessionStorage.setItem("participantId", docRef.id);
+      sessionStorage.setItem("participantName", name.trim());
+      sessionStorage.setItem("participantSection", section || "Other");
+      router.push("/challenge");
+    } catch (err) {
+      console.error("Registration error:", err);
+      setError("Something went wrong. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main className={styles.landing}>
+      {/* Floating particles */}
+      <div className={styles.particles}>
+        {[...Array(6)].map((_, i) => (
+          <div key={i} className={styles.particle} />
+        ))}
+      </div>
+
+      {/* Hero */}
+      <div className={styles.heroSection}>
+        <div className={styles.badge}>
+          <span className={styles.badgeDot} />
+          LogiXcape 2026
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <h1 className={styles.title}>Tech Debugging Challenge</h1>
+        <p className={styles.subtitle}>
+          Find the bugs. Fix the code. Crack the case studies.
+          Test your debugging prowess across three challenging rounds.
+        </p>
+      </div>
+
+      {/* Registration Steps */}
+      <div className={styles.registrationContainer}>
+        {!section ? (
+          // STEP 1: SELECT SECTION
+          <div className={styles.stepContainer}>
+            <h2 className={styles.stepTitle}>Choose Your Weapon</h2>
+            <p className={styles.stepSubtitle}>Select a language to begin your debugging mission</p>
+
+            <div className={styles.bigSectionGrid}>
+              {sections.map((s) => (
+                <button
+                  key={s.id}
+                  className={styles.bigSectionCard}
+                  onClick={() => setSection(s.id as "C" | "Python" | "Other")}
+                  disabled={loading}
+                >
+                  <div className={styles.bigCardIcon}>
+                    <s.icon size={48} />
+                  </div>
+                  <h3 className={styles.bigCardTitle}>{s.label}</h3>
+                  <p className={styles.bigCardDesc}>{s.description}</p>
+                </button>
+              ))}
+            </div>
+
+            {isQuizActive === false && (
+              <div className={styles.eventPausedBanner}>
+                Event is currently paused by admin.
+              </div>
+            )}
+          </div>
+        ) : (
+          // STEP 2: ENTER DETAILS
+          <form className={styles.regCard} onSubmit={handleSubmit}>
+            <button
+              type="button"
+              className={styles.backBtn}
+              onClick={() => setSection(null)} // Go back to step 1
+            >
+              ← Change Language
+            </button>
+
+            <div className={styles.selectedSectionHeader}>
+              <span className={styles.selectedBadge}>
+                Selected: <strong>{section}</strong>
+              </span>
+            </div>
+
+            <h2 className={styles.regTitle}>Identify Yourself</h2>
+            <p className={styles.regSubtitle}>Enter your details to enter the arena</p>
+
+            <div className={styles.formGroup}>
+              <label className={styles.label} htmlFor="name">Full Name</label>
+              <input
+                id="name"
+                className={styles.input}
+                type="text"
+                placeholder="Enter your full name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                disabled={loading}
+                autoFocus
+              />
+            </div>
+
+            <div className={styles.formGroup}>
+              <label className={styles.label} htmlFor="studentId">Student ID</label>
+              <input
+                id="studentId"
+                className={styles.input}
+                type="text"
+                placeholder="Enter your student ID"
+                value={studentId}
+                onChange={(e) => setStudentId(e.target.value)}
+                disabled={loading}
+              />
+            </div>
+
+            {error && <p className={styles.error}>{error}</p>}
+
+            <button
+              type="submit"
+              className={styles.submitBtn}
+              disabled={loading || isQuizActive === false}
+            >
+              Start Challenge →
+            </button>
+          </form>
+        )}
+      </div>
+
+      {/* Feature highlights */}
+      <div className={styles.features}>
+        <div className={styles.featureCard}>
+          <Bug size={20} className={styles.featureIcon} />
+          <span className={styles.featureText}>Fix Syntax Errors</span>
         </div>
-      </main>
-    </div>
+        <div className={styles.featureCard}>
+          <Code size={20} className={styles.featureIcon} />
+          <span className={styles.featureText}>Complete Missing Code</span>
+        </div>
+        <div className={styles.featureCard}>
+          <FileQuestion size={20} className={styles.featureIcon} />
+          <span className={styles.featureText}>Solve Case Studies</span>
+        </div>
+      </div>
+    </main >
   );
 }
