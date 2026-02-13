@@ -1,0 +1,187 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Tech Debugging Challenge API Backend
+
+Globals:
+  Function:
+    Timeout: 30
+    Runtime: nodejs20.x
+    MemorySize: 256
+    Environment:
+      Variables:
+        PARTICIPANTS_TABLE: !Ref ParticipantsTable
+        QUESTIONS_TABLE: !Ref QuestionsTable
+        SETTINGS_TABLE: !Ref SettingsTable
+        METADATA_TABLE: !Ref MetadataTable
+
+Resources:
+  # ---------- DynamoDB Tables ----------
+  ParticipantsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: TechDebug_Participants
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  QuestionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: TechDebug_Questions
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+
+  SettingsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: TechDebug_Settings
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: configKey
+          AttributeType: S
+      KeySchema:
+        - AttributeName: configKey
+          KeyType: HASH
+
+  MetadataTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: TechDebug_Metadata
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: metaKey
+          AttributeType: S
+      KeySchema:
+        - AttributeName: metaKey
+          KeyType: HASH
+
+  # ---------- API Gateway ----------
+  TechDebugApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: prod
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowHeaders:
+          - Content-Type
+          - Authorization
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+
+  # ---------- Lambda Function ----------
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      CodeUri: .
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ParticipantsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref QuestionsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SettingsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref MetadataTable
+      Events:
+        # Settings
+        GetSettings:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TechDebugApi
+            Path: /settings/{key}
+            Method: GET
+        PutSettings:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TechDebugApi
+            Path: /settings/{key}
+            Method: PUT
+        # Participants
+        CreateParticipant:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TechDebugApi
+            Path: /participants
+            Method: POST
+        GetParticipants:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TechDebugApi
+            Path: /participants
+            Method: GET
+        UpdateParticipant:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TechDebugApi
+            Path: /participants/{id}
+            Method: PUT
+        DeleteAllParticipants:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TechDebugApi
+            Path: /participants
+            Method: DELETE
+        # Questions
+        GetQuestions:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TechDebugApi
+            Path: /questions
+            Method: GET
+        CreateQuestion:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TechDebugApi
+            Path: /questions
+            Method: POST
+        UpdateQuestion:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TechDebugApi
+            Path: /questions/{id}
+            Method: PUT
+        DeleteQuestion:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TechDebugApi
+            Path: /questions/{id}
+            Method: DELETE
+        BatchQuestions:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TechDebugApi
+            Path: /questions/batch
+            Method: POST
+        # Metadata
+        GetMetadata:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TechDebugApi
+            Path: /metadata/{key}
+            Method: GET
+        PutMetadata:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref TechDebugApi
+            Path: /metadata/{key}
+            Method: PUT
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway endpoint URL
+    Value: !Sub "https://${TechDebugApi}.execute-api.${AWS::Region}.amazonaws.com/prod"

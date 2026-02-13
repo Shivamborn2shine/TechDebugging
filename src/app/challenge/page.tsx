@@ -2,15 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import {
-    doc,
-    updateDoc,
-    collection,
-    getDocs,
-    query,
-    orderBy,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { getQuestions as fetchQuestionsApi, getMetadata, updateParticipant } from "@/lib/api";
 import { Question, Answer } from "@/types";
 import {
     Terminal,
@@ -59,17 +51,15 @@ export default function ChallengePage() {
             const pSection = sessionStorage.getItem("participantSection") || "Other";
 
             try {
-                // 1. Fetch metadata to check for updates (1 read)
+                // 1. Fetch metadata to check for updates (1 API call)
                 let serverLastUpdated = 0;
                 try {
-                    const metaSnap = await getDocs(collection(db, "metadata"));
-                    const metaDoc = metaSnap.docs.find(d => d.id === "questions");
-                    if (metaDoc) {
-                        serverLastUpdated = metaDoc.data().lastUpdated || 0;
+                    const meta = await getMetadata("questions");
+                    if (meta && "lastUpdated" in meta) {
+                        serverLastUpdated = (meta.lastUpdated as number) || 0;
                     }
                 } catch (err) {
                     console.error("Error fetching metadata:", err);
-                    // Continue anyway, we'll try cache or full fetch
                 }
 
                 // Helper to filter questions by section
@@ -88,7 +78,7 @@ export default function ChallengePage() {
                 };
 
                 // 2. Check local storage cache
-                const cached = localStorage.getItem("cached_questions_v3"); // NEW CACHE KEY
+                const cached = localStorage.getItem("cached_questions_v3");
                 if (cached) {
                     const { data, timestamp } = JSON.parse(cached);
 
@@ -100,16 +90,11 @@ export default function ChallengePage() {
                     }
                 }
 
-                // 3. Fetch fresh questions
-                const q = query(collection(db, "questions"), orderBy("order", "asc"));
-                const snapshot = await getDocs(q);
-                const loaded: Question[] = snapshot.docs.map((doc) => ({
-                    ...doc.data(),
-                    id: doc.id,
-                })) as Question[];
+                // 3. Fetch fresh questions from API
+                const loaded: Question[] = (await fetchQuestionsApi()) as unknown as Question[];
 
                 // Update cache with ALL questions
-                localStorage.setItem("cached_questions_v3", JSON.stringify({ // NEW CACHE KEY
+                localStorage.setItem("cached_questions_v3", JSON.stringify({
                     data: loaded,
                     timestamp: Date.now()
                 }));
@@ -124,7 +109,7 @@ export default function ChallengePage() {
                 }
             } catch (error) {
                 console.error("Error loading questions:", error);
-                const cached = localStorage.getItem("cached_questions_v3"); // NEW CACHE KEY
+                const cached = localStorage.getItem("cached_questions_v3");
                 const renumberLocal = (qs: Question[]) => qs.sort((a, b) => a.order - b.order).map((q, i) => ({ ...q, order: i + 1 }));
 
                 if (cached) {
@@ -243,7 +228,7 @@ export default function ChallengePage() {
             const totalPoints = questions.reduce((sum, q) => sum + q.points, 0);
             const timeTaken = CHALLENGE_DURATION - timeLeft;
 
-            await updateDoc(doc(db, "participants", participantId), {
+            await updateParticipant(participantId, {
                 answers: evaluatedAnswers,
                 score: totalScore,
                 totalPoints,

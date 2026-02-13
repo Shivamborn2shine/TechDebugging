@@ -2,8 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { collection, addDoc, serverTimestamp, getDoc, doc } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { getSettings, createParticipant } from "@/lib/api";
 import { Bug, Code, FileQuestion, Terminal } from "lucide-react";
 import styles from "./page.module.css";
 
@@ -25,9 +24,9 @@ export default function Home() {
   useEffect(() => {
     const checkStatus = async () => {
       try {
-        const configSnap = await getDoc(doc(db, "settings", "config"));
-        if (configSnap.exists()) {
-          setIsQuizActive(configSnap.data().isQuizActive ?? true);
+        const config = await getSettings("config");
+        if (config && "isQuizActive" in config) {
+          setIsQuizActive((config.isQuizActive as boolean) ?? true);
         }
       } catch (err) {
         console.error("Error checking status:", err);
@@ -47,20 +46,19 @@ export default function Home() {
     setError("");
 
     try {
-      const docRef = await addDoc(collection(db, "participants"), {
+      const result = await createParticipant({
         name: name.trim(),
         studentId: studentId.trim(),
-        section, // Save selected section
+        section,
         startedAt: Date.now(),
         score: 0,
         totalPoints: 0,
         answers: [],
         submitted: false,
-        createdAt: serverTimestamp(),
       });
 
       // Store participant ID and section in session storage
-      sessionStorage.setItem("participantId", docRef.id);
+      sessionStorage.setItem("participantId", result.id);
       sessionStorage.setItem("participantName", name.trim());
       sessionStorage.setItem("participantSection", section || "Other");
       router.push("/challenge");

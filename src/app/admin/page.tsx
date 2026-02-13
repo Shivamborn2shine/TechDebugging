@@ -2,17 +2,21 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-    collection,
-    getDocs,
-    addDoc,
-    deleteDoc,
-    updateDoc,
-    doc,
-    query,
-    orderBy,
-    writeBatch,
-} from "firebase/firestore";
-import { db } from "@/lib/firebase";
+    getSettings,
+    putSettings,
+    getParticipants as fetchParticipantsApi,
+    deleteAllParticipants as clearParticipantsApi,
+    getQuestions as fetchQuestionsApi,
+    createQuestion as createQuestionApi,
+    updateQuestion as updateQuestionApi,
+    deleteQuestion as deleteQuestionApi,
+    batchSeedQuestions,
+    batchDeleteQuestions,
+    batchRenumberQuestions,
+    batchMoveSection,
+    batchImportQuestions,
+    putMetadata,
+} from "@/lib/api";
 import { Question, Participant } from "@/types";
 import { sampleQuestions } from "@/data/questions";
 import {
@@ -101,19 +105,14 @@ export default function AdminPage() {
         }
     };
 
-    const fetchSettings = useCallback(async () => {
+    const fetchSettingsData = useCallback(async () => {
         try {
-            const docSnap = await getDocs(collection(db, "settings"));
-            if (!docSnap.empty) {
-                const config = docSnap.docs.find(d => d.id === "config");
-                if (config) {
-                    setIsQuizActive(config.data().isQuizActive ?? true);
-                }
+            const config = await getSettings("config");
+            if (config && "isQuizActive" in config) {
+                setIsQuizActive((config.isQuizActive as boolean) ?? true);
             } else {
                 // Initialize if not exists
-                await import("firebase/firestore").then(({ setDoc, doc }) =>
-                    setDoc(doc(db, "settings", "config"), { isQuizActive: true })
-                );
+                await putSettings("config", { isQuizActive: true });
             }
         } catch (err) {
             console.error("Error fetching settings:", err);
@@ -123,9 +122,7 @@ export default function AdminPage() {
     const toggleQuizStatus = async () => {
         const newState = !isQuizActive;
         try {
-            await import("firebase/firestore").then(({ setDoc, doc }) =>
-                setDoc(doc(db, "settings", "config"), { isQuizActive: newState }, { merge: true })
-            );
+            await putSettings("config", { isQuizActive: newState });
             setIsQuizActive(newState);
         } catch (err) {
             console.error("Error toggling quiz status:", err);
@@ -136,11 +133,7 @@ export default function AdminPage() {
     const fetchParticipants = useCallback(async () => {
         setLoading(true);
         try {
-            const snapshot = await getDocs(collection(db, "participants"));
-            const data: Participant[] = snapshot.docs.map((d) => ({
-                ...(d.data() as Omit<Participant, "id">),
-                id: d.id,
-            }));
+            const data = (await fetchParticipantsApi()) as unknown as Participant[];
             data.sort((a, b) => {
                 if (b.score !== a.score) return b.score - a.score;
                 const aTime = a.completedAt ? a.completedAt - a.startedAt : Infinity;
@@ -158,12 +151,7 @@ export default function AdminPage() {
     const fetchQuestions = useCallback(async () => {
         setLoading(true);
         try {
-            const q = query(collection(db, "questions"), orderBy("order", "asc"));
-            const snapshot = await getDocs(q);
-            const data: Question[] = snapshot.docs.map((d) => ({
-                ...(d.data() as Omit<Question, "id">),
-                id: d.id,
-            })) as Question[];
+            const data = (await fetchQuestionsApi()) as unknown as Question[];
             setQuestions(data);
         } catch (err) {
             console.error("Error fetching questions:", err);
@@ -176,20 +164,15 @@ export default function AdminPage() {
         if (!confirm("This will re-assign order numbers (1, 2, 3...) to ALL questions based on their current sort order. Continue?")) return;
         setLoading(true);
         try {
-            // Sort in memory first to be sure
             const sorted = [...questions].sort((a, b) => (a.order || 0) - (b.order || 0));
-            const batch = writeBatch(db);
+            const updates = sorted
+                .map((q, index) => ({ id: q.id, order: index + 1 }))
+                .filter((u, i) => sorted[i].order !== u.order);
 
-            sorted.forEach((q, index) => {
-                const newOrder = index + 1;
-                if (q.order !== newOrder) {
-                    batch.update(doc(db, "questions", q.id), { order: newOrder });
-                }
-            });
-
-            await batch.commit();
+            if (updates.length > 0) {
+                await batchRenumberQuestions(updates);
+            }
             await fetchQuestions();
-            await updateQuestionsMetadata();
             alert("Questions renumbered successfully!");
         } catch (err) {
             console.error("Error renumbering:", err);
@@ -203,9 +186,9 @@ export default function AdminPage() {
         if (authenticated) {
             fetchParticipants();
             fetchQuestions();
-            fetchSettings();
+            fetchSettingsData();
         }
-    }, [authenticated, fetchParticipants, fetchQuestions, fetchSettings]);
+    }, [authenticated, fetchParticipants, fetchQuestions, fetchSettingsData]);
 
     const exportCSV = () => {
         const submitted = participants.filter((p) => p.submitted);
@@ -228,10 +211,7 @@ export default function AdminPage() {
     const clearAllParticipants = async () => {
         if (!confirm("⚠️ This will delete ALL participant data. This cannot be undone. Continue?")) return;
         try {
-            const snapshot = await getDocs(collection(db, "participants"));
-            const batch = writeBatch(db);
-            snapshot.docs.forEach((d) => batch.delete(d.ref));
-            await batch.commit();
+            await clearParticipantsApi();
             setParticipants([]);
         } catch (err) {
             console.error("Error clearing participants:", err);
@@ -241,33 +221,18 @@ export default function AdminPage() {
     // Helper to update questions metadata timestamp
     const updateQuestionsMetadata = async () => {
         try {
-            await updateDoc(doc(db, "metadata", "questions"), {
-                lastUpdated: Date.now(),
-            }).catch(async (err) => {
-                // Create if doesn't exist
-                if (err.code === "not-found") {
-                    await import("firebase/firestore").then(({ setDoc }) =>
-                        setDoc(doc(db, "metadata", "questions"), { lastUpdated: Date.now() })
-                    );
-                }
-            });
+            await putMetadata("questions", { lastUpdated: Date.now() });
         } catch (err) {
             console.error("Error updating metadata:", err);
         }
     };
 
     const seedQuestions = async () => {
-        if (!confirm("This will add 15 sample questions to Firestore. Continue?")) return;
+        if (!confirm("This will add 15 sample questions to the database. Continue?")) return;
         try {
             setLoading(true);
-            const batch = writeBatch(db);
-            for (const q of sampleQuestions) {
-                const { id, ...data } = q;
-                const newRef = doc(collection(db, "questions"));
-                batch.set(newRef, data);
-            }
-            await batch.commit();
-            await updateQuestionsMetadata();
+            const items = sampleQuestions.map(({ id, ...data }) => data);
+            await batchSeedQuestions(items as Record<string, unknown>[]);
             await fetchQuestions();
         } catch (err) {
             console.error("Error seeding questions:", err);
@@ -375,10 +340,10 @@ export default function AdminPage() {
 
             if (editingId) {
                 // UPDATE existing question
-                await updateDoc(doc(db, "questions", editingId), questionData!);
+                await updateQuestionApi(editingId, questionData!);
             } else {
                 // ADD new question
-                await addDoc(collection(db, "questions"), questionData!);
+                await createQuestionApi(questionData!);
             }
 
             await updateQuestionsMetadata();
@@ -392,10 +357,10 @@ export default function AdminPage() {
         }
     };
 
-    const deleteQuestion = async (id: string) => {
+    const handleDeleteQuestion = async (id: string) => {
         if (!confirm("Delete this question?")) return;
         try {
-            await deleteDoc(doc(db, "questions", id));
+            await deleteQuestionApi(id);
             setQuestions((prev) => prev.filter((q) => q.id !== id));
             setSelectedIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
             if (editingId === id) resetForm();
@@ -437,9 +402,7 @@ export default function AdminPage() {
         if (selectedIds.size === 0) return;
         if (!confirm(`Delete ${selectedIds.size} selected question${selectedIds.size > 1 ? "s" : ""}? This cannot be undone.`)) return;
         try {
-            const batch = writeBatch(db);
-            selectedIds.forEach((id) => batch.delete(doc(db, "questions", id)));
-            await batch.commit();
+            await batchDeleteQuestions(Array.from(selectedIds));
             setQuestions((prev) => prev.filter((q) => !selectedIds.has(q.id)));
             if (editingId && selectedIds.has(editingId)) resetForm();
             await updateQuestionsMetadata();
@@ -454,11 +417,7 @@ export default function AdminPage() {
         if (!confirm(`Move ${selectedIds.size} questions to "${section}"?`)) return;
 
         try {
-            const batch = writeBatch(db);
-            selectedIds.forEach((id) => {
-                batch.update(doc(db, "questions", id), { section });
-            });
-            await batch.commit();
+            await batchMoveSection(Array.from(selectedIds), section);
 
             // Update local state
             setQuestions(prev => prev.map(q =>
@@ -695,19 +654,16 @@ Answer: connection pooling, object pool, pool`;
         setBulkImporting(true);
 
         try {
-            let count = 0;
             const currentMax = questions.length;
+            const items = parsed.map((item, i) => ({
+                ...item,
+                order: currentMax + i + 1,
+                section: bulkSection,
+            }));
 
-            for (let i = 0; i < parsed.length; i++) {
-                const item = parsed[i];
-                item.order = currentMax + i + 1;
-                item.section = bulkSection; // Assign selected section
-                await addDoc(collection(db, "questions"), item);
-                count++;
-            }
-
+            await batchImportQuestions(items);
             await fetchQuestions();
-            setBulkSuccess(`✅ Successfully imported ${count} ${bulkType} question${count !== 1 ? "s" : ""}!`);
+            setBulkSuccess(`✅ Successfully imported ${items.length} ${bulkType} question${items.length !== 1 ? "s" : ""}!`);
             setBulkJson("");
         } catch (err) {
             console.error("Bulk import error:", err);
@@ -1382,7 +1338,7 @@ Answer: connection pooling, object pool, pool`;
                                         </button>
                                         <button
                                             className={styles.deleteBtn}
-                                            onClick={() => deleteQuestion(q.id)}
+                                            onClick={() => handleDeleteQuestion(q.id)}
                                             title="Delete question"
                                         >
                                             <Trash2 size={15} />
