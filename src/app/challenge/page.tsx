@@ -15,6 +15,7 @@ import {
     Bug,
     Code,
     FileQuestion,
+    RefreshCw,
 } from "lucide-react";
 import styles from "./page.module.css";
 
@@ -34,7 +35,93 @@ export default function ChallengePage() {
     const startTimeRef = useRef<number>(Date.now());
     const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+    const [isRefreshing, setIsRefreshing] = useState(false);
+
     // Load participant and questions
+    const loadQuestions = useCallback(async (forceRefresh = false) => {
+        const pid = sessionStorage.getItem("participantId");
+        const pSection = sessionStorage.getItem("participantSection") || "Other";
+
+        if (!pid) {
+            return;
+        }
+
+        if (forceRefresh) setIsRefreshing(true);
+
+        try {
+            // Helper to filter questions by section
+            const filterQuestions = (allQuestions: Question[]) => {
+                return allQuestions.filter(q => {
+                    const qs = q.section || "Other";
+                    return qs === pSection || qs === "Common";
+                });
+            };
+
+            // Helper to renumber for display (1, 2, 3...)
+            const applyRenumbering = (qs: Question[]) => {
+                return qs
+                    .sort((a, b) => a.order - b.order)
+                    .map((q, i) => ({ ...q, order: i + 1 }));
+            };
+
+            // 1. Try to fetch metadata
+            let serverLastUpdated: number | null = null;
+            try {
+                const meta = await getMetadata("questions");
+                if (meta && "lastUpdated" in meta) {
+                    serverLastUpdated = (meta.lastUpdated as number) || 0;
+                }
+            } catch (err) {
+                console.warn("Metadata fetch failed, skipping cache check:", err);
+            }
+
+            // 2. Check local storage cache (only if not forcing refresh AND we have valid server timestamp)
+            if (!forceRefresh) {
+                const cached = localStorage.getItem("cached_questions_v3");
+                if (cached && serverLastUpdated !== null) {
+                    const { data, timestamp } = JSON.parse(cached);
+                    // Use cache ONLY if server timestamp matches or is older (meaning cache is fresh)
+                    if (serverLastUpdated <= timestamp) {
+                        const filtered = filterQuestions(data);
+                        setQuestions(applyRenumbering(filtered));
+                        setLoading(false);
+                        return;
+                    }
+                }
+            }
+
+            // 3. Fetch fresh questions from API (if cache invalid, missing, or forceRefresh)
+            const loaded = (await fetchQuestionsApi()) as unknown as Question[];
+
+            // Update cache
+            localStorage.setItem("cached_questions_v3", JSON.stringify({
+                data: loaded,
+                timestamp: Date.now()
+            }));
+
+            const filtered = filterQuestions(loaded);
+            setQuestions(applyRenumbering(filtered));
+        } catch (error) {
+            console.error("Error loading questions:", error);
+            // Fallback to cache if API fails
+            const cached = localStorage.getItem("cached_questions_v3");
+            const renumberLocal = (qs: Question[]) => qs.sort((a, b) => a.order - b.order).map((q, i) => ({ ...q, order: i + 1 }));
+
+            if (cached) {
+                const { data } = JSON.parse(cached);
+                const filtered = data.filter((q: Question) => {
+                    const qs = q.section || "Other";
+                    return qs === pSection || qs === "Common";
+                });
+                setQuestions(renumberLocal(filtered));
+                if (forceRefresh) alert("Could not fetch new questions. Using cached version.");
+            }
+        } finally {
+            setLoading(false);
+            setIsRefreshing(false);
+        }
+    }, []);
+
     useEffect(() => {
         const pid = sessionStorage.getItem("participantId");
         const pname = sessionStorage.getItem("participantName");
@@ -47,88 +134,9 @@ export default function ChallengePage() {
         setParticipantId(pid);
         setParticipantName(pname || "Participant");
 
-        const loadQuestions = async () => {
-            const pSection = sessionStorage.getItem("participantSection") || "Other";
-
-            try {
-                // 1. Fetch metadata to check for updates (1 API call)
-                let serverLastUpdated = 0;
-                try {
-                    const meta = await getMetadata("questions");
-                    if (meta && "lastUpdated" in meta) {
-                        serverLastUpdated = (meta.lastUpdated as number) || 0;
-                    }
-                } catch (err) {
-                    console.error("Error fetching metadata:", err);
-                }
-
-                // Helper to filter questions by section
-                const filterQuestions = (allQuestions: Question[]) => {
-                    return allQuestions.filter(q => {
-                        const qs = q.section || "Other";
-                        return qs === pSection || qs === "Common";
-                    });
-                };
-
-                // Helper to renumber for display (1, 2, 3...)
-                const applyRenumbering = (qs: Question[]) => {
-                    return qs
-                        .sort((a, b) => a.order - b.order)
-                        .map((q, i) => ({ ...q, order: i + 1 }));
-                };
-
-                // 2. Check local storage cache
-                const cached = localStorage.getItem("cached_questions_v3");
-                if (cached) {
-                    const { data, timestamp } = JSON.parse(cached);
-
-                    if (serverLastUpdated <= timestamp) {
-                        const filtered = filterQuestions(data);
-                        setQuestions(applyRenumbering(filtered));
-                        setLoading(false);
-                        return;
-                    }
-                }
-
-                // 3. Fetch fresh questions from API
-                const loaded: Question[] = (await fetchQuestionsApi()) as unknown as Question[];
-
-                // Update cache with ALL questions
-                localStorage.setItem("cached_questions_v3", JSON.stringify({
-                    data: loaded,
-                    timestamp: Date.now()
-                }));
-
-                const filtered = filterQuestions(loaded);
-                setQuestions(applyRenumbering(filtered));
-
-                if (loaded.length === 0) {
-                    const { sampleQuestions } = await import("@/data/questions");
-                    const filteredSamples = filterQuestions(sampleQuestions);
-                    setQuestions(applyRenumbering(filteredSamples));
-                }
-            } catch (error) {
-                console.error("Error loading questions:", error);
-                const cached = localStorage.getItem("cached_questions_v3");
-                const renumberLocal = (qs: Question[]) => qs.sort((a, b) => a.order - b.order).map((q, i) => ({ ...q, order: i + 1 }));
-
-                if (cached) {
-                    const { data } = JSON.parse(cached);
-                    const filtered = data.filter((q: Question) => (q.section || "Other") === pSection);
-                    setQuestions(renumberLocal(filtered));
-                } else {
-                    const { sampleQuestions } = await import("@/data/questions");
-                    const filteredSamples = sampleQuestions.filter((q) => (q.section || "Other") === pSection);
-                    setQuestions(renumberLocal(filteredSamples));
-                }
-            } finally {
-                setLoading(false);
-            }
-        };
-
         loadQuestions();
         startTimeRef.current = Date.now();
-    }, [router]);
+    }, [router, loadQuestions]);
 
     // Timer with background tab handling
     useEffect(() => {
@@ -191,7 +199,10 @@ export default function ChallengePage() {
                     break;
                 }
                 case "mcq": {
-                    isCorrect = userAnswer === String(q.correctOptionIndex);
+                    const strUser = String(userAnswer).trim();
+                    const strCorrect = String(q.correctOptionIndex).trim();
+                    console.log(`DEBUG MCQ [${q.id}]: user='${strUser}', correct='${strCorrect}'`);
+                    isCorrect = strUser === strCorrect;
                     break;
                 }
                 case "casestudy": {
@@ -203,7 +214,7 @@ export default function ChallengePage() {
                 }
             }
 
-            if (isCorrect) pointsAwarded = q.points;
+            if (isCorrect) pointsAwarded = Number(q.points) || 0;
 
             return {
                 questionId: q.id,
@@ -222,10 +233,17 @@ export default function ChallengePage() {
         try {
             const evaluatedAnswers = evaluateAnswers();
             const totalScore = evaluatedAnswers.reduce(
-                (sum, a) => sum + a.pointsAwarded,
+                (sum, a) => sum + (Number(a.pointsAwarded) || 0),
                 0
             );
-            const totalPoints = questions.reduce((sum, q) => sum + q.points, 0);
+
+            console.log("DEBUG: Submission", {
+                evaluatedAnswers,
+                totalScore,
+                breakdown: evaluatedAnswers.map(a => `${a.questionId}: ${a.isCorrect} -> ${a.pointsAwarded}`)
+            });
+
+            const totalPoints = questions.reduce((sum, q) => sum + (Number(q.points) || 0), 0);
             const timeTaken = CHALLENGE_DURATION - timeLeft;
 
             await updateParticipant(participantId, {
@@ -325,6 +343,14 @@ export default function ChallengePage() {
                 </div>
 
                 <div className={styles.headerRight}>
+                    <button
+                        className={styles.refreshBtn}
+                        onClick={() => loadQuestions(true)}
+                        disabled={isRefreshing}
+                        title="Force refresh questions"
+                    >
+                        <RefreshCw size={16} className={isRefreshing ? styles.spin : ""} />
+                    </button>
                     <div className={styles.scoreDisplay}>
                         <Trophy size={14} />
                         {answeredCount * 10} pts
@@ -360,7 +386,7 @@ export default function ChallengePage() {
                                             {q.title}
                                         </span>
                                         <span className={`${styles.qTypeBadge} ${styles[q.type]}`}>
-                                            {q.type === "casestudy" ? "CS" : q.type.toUpperCase()}
+                                            {q.type === "casestudy" ? "CS" : (q.type || "?").toUpperCase()}
                                         </span>
                                     </button>
                                 </div>

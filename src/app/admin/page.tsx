@@ -1315,7 +1315,7 @@ Answer: connection pooling, object pool, pool`;
                                                 {q.title}
                                                 <span className={`${styles.qCardType} ${styles[q.type]}`}>
                                                     {getTypeIcon(q.type)}
-                                                    {q.type === "casestudy" ? "Case Study" : q.type.toUpperCase()}
+                                                    {q.type === "casestudy" ? "Case Study" : (q.type || "unknown").toUpperCase()}
                                                 </span>
                                                 <span className={styles.qCardSection}>
                                                     {q.section || "Other"}
