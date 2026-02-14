@@ -70,6 +70,27 @@ export default function Home() {
     }
   };
 
+  const [showSplash, setShowSplash] = useState(true);
+
+  if (showSplash) {
+    return (
+      <div className={styles.posterOverlay}>
+        <div className={styles.posterImageContainer}>
+          {/* User should place 'poster.png' in the public folder */}
+          <img
+            src="/poster.png"
+            alt="LogiXcape Event Poster"
+            className={styles.posterImage}
+            onError={(e) => e.currentTarget.style.display = 'none'}
+          />
+        </div>
+        <button className={styles.enterButton} onClick={() => setShowSplash(false)}>
+          Enter Arena
+        </button>
+      </div>
+    );
+  }
+
   return (
     <main className={styles.landing}>
       {/* Floating particles */}
